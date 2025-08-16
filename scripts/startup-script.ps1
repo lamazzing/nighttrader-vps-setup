@@ -476,6 +476,7 @@ CLOSE_OPPOSITE_POSITIONS=false
                 }
             }
         }
+    }
     
     # Report status to dashboard if webhook provided
     if ($env:DASHBOARD_WEBHOOK) {
@@ -484,14 +485,23 @@ CLOSE_OPPOSITE_POSITIONS=false
         
         $vpsIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notlike "*Loopback*" })[0].IPAddress
         
+        # Calculate session match outside hashtable
+        $sessionMatch = $false
+        if ($mt5Running -and $pythonRunning) {
+            $sessionMatch = $pythonRunning[0].SessionId -eq $mt5Running[0].SessionId
+        }
+        
+        # Get timestamp
+        $currentTimestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        
         $status = @{
-            vps_ip = $vpsIp
-            status = "ready"
-            mt5_running = [bool]$mt5Running
-            service_running = [bool]$pythonRunning
-            ssh_available = [bool]$sshService
-            timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-            session_match = if($mt5Running -and $pythonRunning) { $pythonRunning[0].SessionId -eq $mt5Running[0].SessionId } else { $false }
+            vps_ip = $vpsIp;
+            status = "ready";
+            mt5_running = [bool]$mt5Running;
+            service_running = [bool]$pythonRunning;
+            ssh_available = [bool]$sshService;
+            timestamp = $currentTimestamp;
+            session_match = $sessionMatch
         }
         
         try {
