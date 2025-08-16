@@ -476,7 +476,6 @@ CLOSE_OPPOSITE_POSITIONS=false
                 }
             }
         }
-    }
     
     # Report status to dashboard if webhook provided
     if ($env:DASHBOARD_WEBHOOK) {
