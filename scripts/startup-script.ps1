@@ -1,4 +1,3 @@
-#ps1_sysnative
 # NightTrader Complete Windows VPS Setup Script
 # This script runs at first boot and installs everything needed for automated trading
 # Includes: Python, Git, SSH, PsExec, MT5 Terminal, and NightTrader Service
@@ -495,12 +494,12 @@ CLOSE_OPPOSITE_POSITIONS=false
         $currentTimestamp = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
         
         $status = @{
-            vps_ip = $vpsIp;
-            status = "ready";
-            mt5_running = [bool]$mt5Running;
-            service_running = [bool]$pythonRunning;
-            ssh_available = [bool]$sshService;
-            timestamp = $currentTimestamp;
+            vps_ip = $vpsIp
+            status = "ready"
+            mt5_running = [bool]$mt5Running
+            service_running = [bool]$pythonRunning
+            ssh_available = [bool]$sshService
+            timestamp = $currentTimestamp
             session_match = $sessionMatch
         }
         
