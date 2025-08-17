@@ -127,8 +127,7 @@ Subsystem sftp sftp-server.exe
         
         Remove-Item $sshZip -Force
         Write-Log "OpenSSH installed and configured successfully"
-    }
-    catch {
+    } catch {
         Write-Log "GitHub installation failed, trying Windows capability..."
         Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
         Start-Service sshd
