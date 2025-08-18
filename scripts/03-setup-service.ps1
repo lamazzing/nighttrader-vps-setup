@@ -32,8 +32,22 @@ try {
     
     Write-Log "Repository URL: $repoUrl"
     
-    # Clone the repository
-    $cloneOutput = & git clone $repoUrl service 2>&1
+    # Refresh PATH to ensure Git is available
+    $gitPath = "C:\Program Files\Git\cmd"
+    if (Test-Path $gitPath) {
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        Write-Log "PATH refreshed to include Git"
+    }
+    
+    # Try to use git with full path first, then fall back to git command
+    $gitExe = "C:\Program Files\Git\cmd\git.exe"
+    if (Test-Path $gitExe) {
+        Write-Log "Using Git at: $gitExe"
+        $cloneOutput = & $gitExe clone $repoUrl service 2>&1
+    } else {
+        Write-Log "Using git from PATH"
+        $cloneOutput = & git clone $repoUrl service 2>&1
+    }
     Write-Log "Git output: $cloneOutput"
     
     # Verify clone was successful

@@ -136,11 +136,13 @@ if ($task) {
         Write-Log "  └─ Last run: $($taskInfo.LastRunTime)" -Success
         if ($taskInfo.LastTaskResult -eq 0) {
             Write-Log "  └─ Last result: Success" -Success
-        } else {
+        }
+        else {
             Write-Log "  └─ Last result: $($taskInfo.LastTaskResult)" -Warning
         }
     }
-} else {
+}
+else {
     Write-Log "✗ Scheduled task not found" -Error
 }
 

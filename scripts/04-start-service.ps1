@@ -64,7 +64,7 @@ try {
     
     # Define task trigger (at startup and every 5 minutes)
     $triggers = @(
-        New-ScheduledTaskTrigger -AtStartup,
+        New-ScheduledTaskTrigger -AtStartup
         New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
     )
     
