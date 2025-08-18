@@ -83,7 +83,26 @@ try {
         Write-Log "Warning: OpenSSH installation failed, but continuing..."
     }
     
-    # 4. Configure Windows Firewall
+    # 4. Install PsExec for session management
+    Write-Log ""
+    Write-Log "Installing PsExec for session management..."
+    $psexecPath = "C:\Windows\System32\psexec.exe"
+    if (-not (Test-Path $psexecPath)) {
+        try {
+            # Download PsExec64 and rename to psexec.exe
+            Invoke-WebRequest -Uri "https://live.sysinternals.com/PsExec64.exe" -OutFile $psexecPath -UseBasicParsing
+            
+            # Accept EULA automatically
+            & reg add "HKCU\Software\Sysinternals\PsExec" /v EulaAccepted /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+            Write-Log "PsExec installed successfully"
+        } catch {
+            Write-Log "Warning: Failed to install PsExec - $($_.Exception.Message)"
+        }
+    } else {
+        Write-Log "PsExec already installed"
+    }
+    
+    # 5. Configure Windows Firewall
     Write-Log ""
     Write-Log "Configuring Windows Firewall..."
     

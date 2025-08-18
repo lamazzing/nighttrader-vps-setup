@@ -50,11 +50,23 @@ try {
     }
     Write-Log "Git output: $cloneOutput"
     
-    # Verify clone was successful
-    if (Test-Path "C:\NightTrader\service") {
+    # Verify clone was successful by checking for actual files
+    if ((Test-Path "C:\NightTrader\service\mt5-service\service.py") -or 
+        (Test-Path "C:\NightTrader\service\mt5-service")) {
         Write-Log "Repository cloned successfully"
     } else {
-        throw "Failed to clone repository"
+        # Sometimes git clone output doesn't indicate failure properly
+        # Check if directory exists but is empty
+        if (Test-Path "C:\NightTrader\service") {
+            $files = Get-ChildItem "C:\NightTrader\service" -Recurse -File
+            if ($files.Count -gt 0) {
+                Write-Log "Repository cloned successfully (found $($files.Count) files)"
+            } else {
+                throw "Repository directory exists but is empty"
+            }
+        } else {
+            throw "Failed to clone repository - directory not created"
+        }
     }
     
     # Change to service directory

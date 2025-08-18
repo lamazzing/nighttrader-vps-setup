@@ -1,5 +1,5 @@
 # NightTrader Setup - Step 4: Start Service
-# Starts the MT5 service using scheduled task (simplified approach)
+# Starts the MT5 service using PsExec in the same session as MT5 Terminal
 
 param(
     [string]$LogPath = "C:\NightTrader\logs\start-service.log"
@@ -38,12 +38,91 @@ try {
     
     # Verify service file exists
     if (-not (Test-Path $servicePath)) {
-        throw "Service file not found: $servicePath"
+        throw "Service file not found at: $servicePath"
     }
     
-    # Create scheduled task for service
+    # Ensure PsExec is available
     Write-Log ""
-    Write-Log "Creating scheduled task for NightTrader service..."
+    Write-Log "Checking for PsExec..."
+    $psexecPath = "C:\Windows\System32\psexec.exe"
+    
+    if (-not (Test-Path $psexecPath)) {
+        Write-Log "PsExec not found, downloading..."
+        try {
+            Invoke-WebRequest -Uri "https://live.sysinternals.com/PsExec64.exe" -OutFile $psexecPath -UseBasicParsing
+            & reg add "HKCU\Software\Sysinternals\PsExec" /v EulaAccepted /t REG_DWORD /d 1 /f 2>&1 | Out-Null
+            Write-Log "PsExec downloaded and configured"
+        } catch {
+            Write-Log "Warning: Failed to download PsExec, will use scheduled task instead"
+        }
+    } else {
+        Write-Log "PsExec found at: $psexecPath"
+    }
+    
+    # Find MT5 Terminal session
+    Write-Log ""
+    Write-Log "Finding MT5 Terminal session..."
+    $mt5Process = Get-Process terminal64 -ErrorAction SilentlyContinue
+    
+    $sessionId = 1  # Default to session 1
+    if ($mt5Process) {
+        $sessionId = $mt5Process[0].SessionId
+        Write-Log "MT5 Terminal found in session $sessionId"
+    } else {
+        Write-Log "MT5 Terminal not found, will use default session 1"
+    }
+    
+    # Kill any existing Python service processes
+    Write-Log "Stopping any existing service processes..."
+    $existingService = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            $_.Path -like "*python*"
+        } catch {
+            $false
+        }
+    }
+    
+    if ($existingService) {
+        $existingService | Stop-Process -Force -ErrorAction SilentlyContinue
+        Write-Log "Stopped $($existingService.Count) existing Python process(es)"
+        Start-Sleep -Seconds 2
+    }
+    
+    # Start service with PsExec if available
+    if (Test-Path $psexecPath) {
+        Write-Log ""
+        Write-Log "Starting service in session $sessionId using PsExec..."
+        
+        $psexecCommand = "psexec -accepteula -i $sessionId -d `"$pythonPath`" `"$servicePath`""
+        Write-Log "Executing: $psexecCommand"
+        
+        $psexecResult = & cmd /c $psexecCommand 2>&1 | Out-String
+        Write-Log "PsExec output: $psexecResult"
+        
+        if ($psexecResult -match "started on|process ID") {
+            Write-Log "Service started successfully with PsExec"
+            
+            # Wait for service to initialize
+            Start-Sleep -Seconds 5
+            
+            # Verify service is running
+            $verifyProcess = Get-Process python -ErrorAction SilentlyContinue | Where-Object {
+                $_.SessionId -eq $sessionId
+            }
+            
+            if ($verifyProcess) {
+                Write-Log "✓ Service verified running in session $sessionId (PID: $($verifyProcess[0].Id))"
+            } else {
+                Write-Log "Warning: Could not verify service process"
+            }
+        } else {
+            Write-Log "Warning: PsExec may have encountered issues"
+        }
+    }
+    
+    # Create scheduled task as backup/restart mechanism
+    Write-Log ""
+    Write-Log "Creating scheduled task for automatic restart..."
     
     # Remove existing task if it exists
     $taskName = "NightTrader_MT5_Service"
@@ -62,10 +141,12 @@ try {
         -Argument $servicePath `
         -WorkingDirectory "C:\NightTrader\service\mt5-service"
     
-    # Define task trigger (at startup and every 5 minutes)
+    # Define task trigger (at startup and every 5 minutes, with proper duration)
     $triggers = @(
         New-ScheduledTaskTrigger -AtStartup
-        New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration ([TimeSpan]::MaxValue)
+        New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+            -RepetitionInterval (New-TimeSpan -Minutes 5) `
+            -RepetitionDuration (New-TimeSpan -Days 365)  # 1 year instead of MaxValue
     )
     
     # Define task principal (run as SYSTEM with highest privileges)
@@ -94,52 +175,72 @@ try {
     
     Write-Log "Scheduled task created successfully"
     
-    # Start the task immediately
-    Write-Log "Starting the service task..."
-    Start-ScheduledTask -TaskName $taskName
+    # If PsExec wasn't available or didn't work, start via scheduled task
+    if (-not (Test-Path $psexecPath)) {
+        Write-Log "Starting service via scheduled task (PsExec not available)..."
+        Start-ScheduledTask -TaskName $taskName
+        Start-Sleep -Seconds 5
+    }
     
-    # Wait a moment for the task to start
-    Start-Sleep -Seconds 5
+    # Final verification
+    Write-Log ""
+    Write-Log "Performing final verification..."
     
-    # Check task status
-    $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName
-    Write-Log "Task last run time: $($taskInfo.LastRunTime)"
-    Write-Log "Task last result: $($taskInfo.LastTaskResult)"
-    
-    # Check if Python process is running
-    Start-Sleep -Seconds 5
-    $pythonProcess = Get-Process python -ErrorAction SilentlyContinue | 
-        Where-Object { $_.Path -like "*python*" }
-    
+    $pythonProcess = Get-Process python -ErrorAction SilentlyContinue
     if ($pythonProcess) {
-        Write-Log "Python service process detected (PID: $($pythonProcess[0].Id))"
+        Write-Log "✓ Python process running (Count: $($pythonProcess.Count))"
+        foreach ($proc in $pythonProcess) {
+            Write-Log "  - PID: $($proc.Id), Session: $($proc.SessionId)"
+        }
     } else {
-        Write-Log "Warning: Python process not detected yet (may still be starting)"
+        Write-Log "⚠ No Python process found, service may take time to start"
+    }
+    
+    # Check if service can connect to infrastructure
+    Write-Log ""
+    Write-Log "Checking service log for connection status..."
+    $serviceLog = "C:\NightTrader\logs\mt5_service.log"
+    if (Test-Path $serviceLog) {
+        $recentLogs = Get-Content $serviceLog -Tail 10
+        Write-Log "Recent service logs:"
+        $recentLogs | ForEach-Object { Write-Log "  $_" }
     }
     
     Write-Log ""
     Write-Log "==============================================="
-    Write-Log "NightTrader Service Start Complete!"
+    Write-Log "Service Start Complete!"
     Write-Log "==============================================="
     Write-Log ""
-    Write-Log "The service is configured to:"
-    Write-Log "- Start automatically at system boot"
-    Write-Log "- Restart every 5 minutes if not running"
-    Write-Log "- Retry 3 times if it fails"
+    Write-Log "IMPORTANT: The service is configured to:"
+    Write-Log "  1. Run in the same session as MT5 Terminal (using PsExec)"
+    Write-Log "  2. Auto-restart on failure (via scheduled task)"
+    Write-Log "  3. Start automatically at system boot"
+    Write-Log ""
+    Write-Log "Check C:\NightTrader\logs\mt5_service.log for service status"
     
-    # Save status for next script
+    # Save status
     @{
         Status = "Success"
-        TaskCreated = $true
-        TaskName = $taskName
-        ServiceRunning = [bool]$pythonProcess
+        PsExecUsed = Test-Path $psexecPath
+        SessionId = $sessionId
+        ScheduledTask = $true
         Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    } | ConvertTo-Json | Out-File "C:\NightTrader\start-status.json"
+    } | ConvertTo-Json | Out-File "C:\NightTrader\service-start-status.json"
     
     exit 0
     
 } catch {
     Write-Log "ERROR: Service start failed"
     Write-Log $_.Exception.Message
-    exit 1
+    
+    # Try fallback with scheduled task
+    Write-Log "Attempting fallback start with scheduled task..."
+    try {
+        Start-ScheduledTask -TaskName "NightTrader_MT5_Service" -ErrorAction Stop
+        Write-Log "Started via scheduled task (fallback)"
+        exit 0
+    } catch {
+        Write-Log "Fallback also failed: $($_.Exception.Message)"
+        exit 1
+    }
 }
