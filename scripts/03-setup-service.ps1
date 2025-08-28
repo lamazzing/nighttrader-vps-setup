@@ -63,12 +63,61 @@ try {
     $gitExe = "C:\Program Files\Git\cmd\git.exe"
     if (Test-Path $gitExe) {
         Write-Log "Using Git at: $gitExe"
-        $cloneOutput = & $gitExe clone $repoUrl service 2>&1
+        # Temporarily change error action preference for git command
+        $oldErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        
+        # Capture both stdout and stderr, but don't treat stderr as an error
+        $cloneProcess = Start-Process -FilePath $gitExe -ArgumentList "clone", $repoUrl, "service" -NoNewWindow -Wait -PassThru -RedirectStandardOutput "git_output.txt" -RedirectStandardError "git_error.txt"
+        
+        # Read the output files
+        if (Test-Path "git_output.txt") {
+            $gitOutput = Get-Content "git_output.txt" -Raw
+            Remove-Item "git_output.txt" -Force
+        }
+        if (Test-Path "git_error.txt") {
+            $gitError = Get-Content "git_error.txt" -Raw
+            Remove-Item "git_error.txt" -Force
+        }
+        
+        $ErrorActionPreference = $oldErrorActionPreference
+        
+        # Check if clone was successful by checking exit code
+        if ($cloneProcess.ExitCode -eq 0) {
+            Write-Log "Git clone successful"
+            if ($gitOutput) { Write-Log "Git output: $gitOutput" }
+        } else {
+            Write-Log "Git clone failed with exit code: $($cloneProcess.ExitCode)"
+            if ($gitError) { Write-Log "Git error: $gitError" }
+            throw "Git clone failed: $gitError"
+        }
     } else {
         Write-Log "Using git from PATH"
-        $cloneOutput = & git clone $repoUrl service 2>&1
+        $oldErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        
+        $cloneProcess = Start-Process -FilePath "git" -ArgumentList "clone", $repoUrl, "service" -NoNewWindow -Wait -PassThru -RedirectStandardOutput "git_output.txt" -RedirectStandardError "git_error.txt"
+        
+        if (Test-Path "git_output.txt") {
+            $gitOutput = Get-Content "git_output.txt" -Raw
+            Remove-Item "git_output.txt" -Force
+        }
+        if (Test-Path "git_error.txt") {
+            $gitError = Get-Content "git_error.txt" -Raw
+            Remove-Item "git_error.txt" -Force
+        }
+        
+        $ErrorActionPreference = $oldErrorActionPreference
+        
+        if ($cloneProcess.ExitCode -eq 0) {
+            Write-Log "Git clone successful"
+            if ($gitOutput) { Write-Log "Git output: $gitOutput" }
+        } else {
+            Write-Log "Git clone failed with exit code: $($cloneProcess.ExitCode)"
+            if ($gitError) { Write-Log "Git error: $gitError" }
+            throw "Git clone failed: $gitError"
+        }
     }
-    Write-Log "Git output: $cloneOutput"
     
     # Verify clone was successful by checking for actual files
     if ((Test-Path "C:\NightTrader\service\mt5-service\service.py") -or 
