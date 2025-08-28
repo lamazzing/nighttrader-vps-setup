@@ -36,36 +36,15 @@ try {
     Remove-Item $mt5Installer -Force
     Write-Log "MT5 Terminal installed"
     
-    # Check if MT5 credentials are provided
-    if ($env:MT5_LOGIN -and $env:MT5_SERVER -and $env:MT5_PASSWORD) {
-        Write-Log "Creating MT5 auto-login configuration..."
-        
-        $mt5ConfigPath = "C:\NightTrader\mt5-config.ini"
-        $mt5Config = @"
-[Server]
-$($env:MT5_SERVER)
-
-[Account]
-Login=$($env:MT5_LOGIN)
-Password=$($env:MT5_PASSWORD)
-"@
-        $mt5Config | Out-File -FilePath $mt5ConfigPath -Encoding UTF8
-        Write-Log "Auto-login configuration created"
-        
-        # Start MT5 with auto-login
-        $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
-        if (Test-Path $mt5Path) {
-            Write-Log "Starting MT5 Terminal with auto-login..."
-            Start-Process -FilePath $mt5Path -ArgumentList "/config:$mt5ConfigPath"
-        }
+    # Start MT5 Terminal without auto-login
+    # Users will configure MT5 manually through the terminal interface
+    Write-Log "Starting MT5 Terminal (manual configuration required)..."
+    $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
+    if (Test-Path $mt5Path) {
+        Start-Process -FilePath $mt5Path
+        Write-Log "MT5 Terminal started - please configure login manually"
     } else {
-        Write-Log "No MT5 credentials provided, starting without auto-login..."
-        
-        # Start MT5 without auto-login
-        $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
-        if (Test-Path $mt5Path) {
-            Start-Process -FilePath $mt5Path
-        }
+        Write-Log "Warning: MT5 Terminal executable not found at expected path"
     }
     
     # Wait for MT5 to initialize

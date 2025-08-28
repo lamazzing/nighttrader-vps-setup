@@ -100,31 +100,42 @@ try {
     Write-Log "Creating environment configuration..."
     $envPath = "C:\NightTrader\service\mt5-service\.env"
     
-    # Build environment file from environment variables
+    # Build environment file with secure credentials
+    # Check if environment variables are set
+    $rabbitmqPassword = if ($env:RABBITMQ_PASSWORD) { $env:RABBITMQ_PASSWORD } else { "" }
+    $redisPassword = if ($env:REDIS_PASSWORD) { $env:REDIS_PASSWORD } else { "" }
+    $rabbitmqUser = if ($env:RABBITMQ_USER) { $env:RABBITMQ_USER } else { "nighttrader" }
+    $queueName = if ($env:RABBITMQ_QUEUE_NAME) { $env:RABBITMQ_QUEUE_NAME } else { "mt5_signals" }
+    $webhookToken = if ($env:WEBHOOK_TOKEN) { $env:WEBHOOK_TOKEN } else { "" }
+    
     $envContent = @"
-# MT5 Configuration
-MT5_LOGIN=$($env:MT5_LOGIN)
-MT5_PASSWORD=$($env:MT5_PASSWORD)
-MT5_SERVER=$($env:MT5_SERVER)
-
-# Redis Configuration
-REDIS_HOST=$($env:DIGITALOCEAN_IP)
-REDIS_PORT=6379
-REDIS_PASSWORD=$($env:REDIS_PASSWORD)
-
-# RabbitMQ Configuration
-RABBITMQ_HOST=$($env:DIGITALOCEAN_IP)
-RABBITMQ_PORT=5672
-RABBITMQ_USER=$($env:RABBITMQ_USER)
-RABBITMQ_PASSWORD=$($env:RABBITMQ_PASSWORD)
+# MT5 Configuration (configure manually in MT5 terminal)
+MT5_LOGIN=
+MT5_PASSWORD=
+MT5_SERVER=
 
 # Service Configuration
+DIGITALOCEAN_DROPLET_IP=104.236.86.194
 SINGLE_TRADE_MODE=true
 CLOSE_OPPOSITE_POSITIONS=false
+
+# Queue Configuration (VPS-specific)
+RABBITMQ_QUEUE_NAME=$queueName
+WEBHOOK_TOKEN=$webhookToken
+
+# Infrastructure Credentials (KEEP SECURE!)
+# WARNING: If these are empty, set them before starting the service
+RABBITMQ_USER=$rabbitmqUser
+RABBITMQ_PASSWORD=$rabbitmqPassword
+REDIS_PASSWORD=$redisPassword
 "@
     
     $envContent | Out-File -FilePath $envPath -Encoding UTF8
     Write-Log "Environment configuration created at: $envPath"
+    
+    if (-not $rabbitmqPassword -or -not $redisPassword) {
+        Write-Log "WARNING: RABBITMQ_PASSWORD and REDIS_PASSWORD must be set in the .env file before starting the service!"
+    }
     
     # Verify service files exist
     $serviceFile = "C:\NightTrader\service\mt5-service\service.py"

@@ -25,6 +25,15 @@ class Config:
     
     # Webhook Configuration
     WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET')
+    WEBHOOK_TOKEN = os.getenv('WEBHOOK_TOKEN')  # VPS-specific webhook token
+    
+    # Queue Configuration
+    RABBITMQ_QUEUE_NAME = os.getenv('RABBITMQ_QUEUE_NAME', 'mt5_signals')  # VPS-specific queue
+    
+    # Infrastructure Credentials (NEW - for security)
+    RABBITMQ_USER = os.getenv('RABBITMQ_USER', 'nighttrader')
+    RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD')
+    REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
     
     @classmethod
     def validate(cls):
@@ -35,7 +44,15 @@ class Config:
         if not cls.DO_SERVER_IP:
             raise ValueError("DO_SERVER_IP must be set in .env file")
             
-        if not cls.REDIS_URL or not cls.RABBITMQ_URL:
-            raise ValueError("REDIS_URL and RABBITMQ_URL must be set in .env file")
+        # Check for new required credentials
+        if not cls.RABBITMQ_PASSWORD:
+            raise ValueError("RABBITMQ_PASSWORD must be set in .env file (security update required)")
+            
+        if not cls.REDIS_PASSWORD:
+            raise ValueError("REDIS_PASSWORD must be set in .env file (security update required)")
+        
+        # Legacy check - can be removed once migration is complete
+        if cls.REDIS_URL or cls.RABBITMQ_URL:
+            print("WARNING: REDIS_URL and RABBITMQ_URL are deprecated. Use individual credential environment variables instead.")
         
         return True

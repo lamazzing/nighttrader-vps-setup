@@ -40,6 +40,7 @@ class MT5Service:
         self.rabbitmq_channel = None
         self.redis_client = None
         self.symbol_map = {}  # Map requested symbols to tradeable ones
+        self.vps_id = os.getenv('VPS_INSTANCE_ID', 'unknown')  # Unique VPS identifier
         
     def connect_mt5(self):
         """Initialize and login to MT5"""
@@ -248,20 +249,50 @@ class MT5Service:
             # Get DigitalOcean IP
             digitalocean_ip = os.getenv('DIGITALOCEAN_DROPLET_IP', '104.236.86.194')
             
+            # Get queue name from environment (VPS-specific or default)
+            self.queue_name = os.getenv('RABBITMQ_QUEUE_NAME', 'mt5_signals')
+            logger.info(f"Using queue: {self.queue_name}")
+            
+            # Get RabbitMQ credentials from environment (read-only consumer)
+            rabbitmq_user = os.getenv('RABBITMQ_USER', 'vps_consumer')
+            rabbitmq_password = os.getenv('RABBITMQ_PASSWORD')
+            if not rabbitmq_password:
+                logger.error("RABBITMQ_PASSWORD not set in environment")
+                return False
+            
             # Connect to RabbitMQ
             logger.info(f"Connecting to RabbitMQ at {digitalocean_ip}...")
-            rabbitmq_url = f"amqp://nighttrader:nighttrader123@{digitalocean_ip}:5672"
+            rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_password}@{digitalocean_ip}:5672"
             connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
             self.rabbitmq_channel = connection.channel()
-            self.rabbitmq_channel.queue_declare(queue='mt5_signals', durable=True)
-            logger.info("RabbitMQ connected")
+            
+            # Try to declare queue (will fail with read-only user - that's OK)
+            try:
+                self.rabbitmq_channel.queue_declare(queue=self.queue_name, durable=True, passive=True)
+                logger.info(f"Queue {self.queue_name} exists")
+            except pika.exceptions.ChannelClosedByBroker as e:
+                if "ACCESS_REFUSED" in str(e):
+                    logger.info(f"Read-only access confirmed - queue {self.queue_name} should exist")
+                    # Reconnect after ACCESS_REFUSED error
+                    connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
+                    self.rabbitmq_channel = connection.channel()
+                else:
+                    raise
+            
+            logger.info(f"RabbitMQ connected to queue: {self.queue_name}")
+            
+            # Get Redis password from environment
+            redis_password = os.getenv('REDIS_PASSWORD')
+            if not redis_password:
+                logger.error("REDIS_PASSWORD not set in environment")
+                return False
             
             # Connect to Redis
             logger.info(f"Connecting to Redis at {digitalocean_ip}...")
             self.redis_client = redis.Redis(
                 host=digitalocean_ip,
                 port=6379,
-                password='nighttrader-redis-pass-2024',
+                password=redis_password,
                 decode_responses=True
             )
             self.redis_client.ping()
@@ -284,6 +315,14 @@ class MT5Service:
             
             logger.info(f"Processing signal: {signal}")
             
+            # CRITICAL: Validate this signal is for THIS VPS
+            signal_vps_id = signal.get('vps_id', 'unknown')
+            if signal_vps_id != self.vps_id:
+                logger.warning(f"Signal VPS ID mismatch: expected {self.vps_id}, got {signal_vps_id}")
+                logger.warning("Ignoring signal intended for different VPS")
+                self.log_trade_attempt(signal, "REJECTED", f"Wrong VPS: {signal_vps_id}")
+                return True  # ACK to prevent redelivery
+            
             # Calculate time since webhook received signal
             if 'timestamp' in signal:
                 try:
@@ -291,6 +330,13 @@ class MT5Service:
                     current_time = datetime.now(timezone.utc)
                     time_diff = (current_time - webhook_time).total_seconds()
                     logger.info(f"Signal age: {time_diff:.2f} seconds since webhook received it")
+                    
+                    # Warn if signal is older than 5 seconds (should have expired in queue)
+                    if time_diff > 5:
+                        logger.warning(f"⚠️ Processing old signal: {time_diff:.2f}s old (>5s TTL)")
+                        logger.warning("This signal should have expired - check RabbitMQ TTL settings")
+                        # Still process it since it made it through the queue
+                        # but this indicates a configuration issue
                 except Exception as e:
                     logger.warning(f"Could not parse webhook timestamp: {e}")
             
@@ -461,10 +507,13 @@ class MT5Service:
     
     def run(self):
         """Main service loop"""
-        logger.info("Starting MT5 Service v5 (PU Prime Edition)...")
+        logger.info("Starting MT5 Service v6 (Token-Secured Edition)...")
+        logger.info(f"VPS Instance ID: {self.vps_id}")
+        logger.info(f"Queue Name: {os.getenv('RABBITMQ_QUEUE_NAME', 'not set')}")
         logger.info(f"Trading Mode Configuration:")
         logger.info(f"  - Single Trade Mode: {'ENABLED' if Config.SINGLE_TRADE_MODE else 'DISABLED'}")
         logger.info(f"  - Close Opposite Positions: {'ENABLED' if Config.CLOSE_OPPOSITE_POSITIONS else 'DISABLED'}")
+        logger.info(f"Security: Token-based queue isolation ENABLED")
         
         # Connect to MT5
         if not self.connect_mt5():
@@ -476,15 +525,15 @@ class MT5Service:
             logger.error("Failed to connect to services")
             return
         
-        # Setup consumer
+        # Setup consumer for VPS-specific queue
         self.rabbitmq_channel.basic_qos(prefetch_count=1)
         self.rabbitmq_channel.basic_consume(
-            queue='mt5_signals',
+            queue=self.queue_name,
             on_message_callback=self.on_message,
             auto_ack=False
         )
         
-        logger.info("Service started. Waiting for signals...")
+        logger.info(f"Service started. Listening on queue: {self.queue_name}")
         logger.info("Ready to trade on PU Prime demo!")
         
         try:

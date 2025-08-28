@@ -168,33 +168,15 @@ Subsystem sftp sftp-server.exe
     Start-Process -FilePath $mt5Installer -ArgumentList "/auto" -Wait -NoNewWindow
     Remove-Item $mt5Installer -Force
     
-    # Create MT5 auto-login configuration if credentials are provided
-    if ($env:MT5_LOGIN -and $env:MT5_SERVER -and $env:MT5_PASSWORD) {
-        Write-Log "Creating MT5 auto-login configuration..."
-        $mt5ConfigPath = "C:\NightTrader\mt5-config.ini"
-        $mt5Config = @"
-[Server]
-$($env:MT5_SERVER)
-
-[Account]
-Login=$($env:MT5_LOGIN)
-Password=$($env:MT5_PASSWORD)
-"@
-        $mt5Config | Out-File -FilePath $mt5ConfigPath -Encoding UTF8
-        
-        # Start MT5 with auto-login
-        Write-Log "Starting MT5 Terminal with auto-login..."
-        $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
-        if (Test-Path $mt5Path) {
-            Start-Process -FilePath $mt5Path -ArgumentList "/config:$mt5ConfigPath"
-        }
+    # Start MT5 Terminal without auto-login
+    # Users will configure MT5 manually through the terminal interface
+    Write-Log "Starting MT5 Terminal (manual configuration required)..."
+    $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
+    if (Test-Path $mt5Path) {
+        Start-Process -FilePath $mt5Path
+        Write-Log "MT5 Terminal started - please configure login manually"
     } else {
-        Write-Log "MT5 credentials not provided, manual login required"
-        # Start MT5 without auto-login
-        $mt5Path = "C:\Program Files\MetaTrader 5\terminal64.exe"
-        if (Test-Path $mt5Path) {
-            Start-Process -FilePath $mt5Path
-        }
+        Write-Log "Warning: MT5 Terminal executable not found at expected path"
     }
     
     Write-Log "MT5 Terminal installed successfully"
@@ -246,31 +228,37 @@ Password=$($env:MT5_PASSWORD)
     Write-Log "[9/11] Configuring service environment..."
     $envPath = "C:\NightTrader\service\mt5-service\.env"
     
-    # Build environment file from environment variables
+    # Build environment file with secure credentials
+    # Check if environment variables are set from provisioning
+    $rabbitmqPassword = if ($env:RABBITMQ_PASSWORD) { $env:RABBITMQ_PASSWORD } else { "" }
+    $redisPassword = if ($env:REDIS_PASSWORD) { $env:REDIS_PASSWORD } else { "" }
+    $rabbitmqUser = if ($env:RABBITMQ_USER) { $env:RABBITMQ_USER } else { "nighttrader" }
+    $queueName = if ($env:RABBITMQ_QUEUE_NAME) { $env:RABBITMQ_QUEUE_NAME } else { "mt5_signals" }
+    $webhookToken = if ($env:WEBHOOK_TOKEN) { $env:WEBHOOK_TOKEN } else { "" }
+    
     $envContent = @"
-# MT5 Configuration
-MT5_LOGIN=$($env:MT5_LOGIN)
-MT5_PASSWORD=$($env:MT5_PASSWORD)
-MT5_SERVER=$($env:MT5_SERVER)
-
-# Redis Configuration
-REDIS_HOST=$($env:DIGITALOCEAN_IP)
-REDIS_PORT=6379
-REDIS_PASSWORD=$($env:REDIS_PASSWORD)
-
-# RabbitMQ Configuration
-RABBITMQ_HOST=$($env:DIGITALOCEAN_IP)
-RABBITMQ_PORT=5672
-RABBITMQ_USER=$($env:RABBITMQ_USER)
-RABBITMQ_PASSWORD=$($env:RABBITMQ_PASSWORD)
+# MT5 Configuration (configure manually in MT5 terminal)
+MT5_LOGIN=
+MT5_PASSWORD=
+MT5_SERVER=
 
 # Service Configuration
+DIGITALOCEAN_DROPLET_IP=104.236.86.194
 SINGLE_TRADE_MODE=true
 CLOSE_OPPOSITE_POSITIONS=false
+
+# Queue Configuration (VPS-specific)
+RABBITMQ_QUEUE_NAME=$queueName
+WEBHOOK_TOKEN=$webhookToken
+
+# Infrastructure Credentials (KEEP SECURE!)
+RABBITMQ_USER=$rabbitmqUser
+RABBITMQ_PASSWORD=$rabbitmqPassword
+REDIS_PASSWORD=$redisPassword
 "@
     
     $envContent | Out-File -FilePath $envPath -Encoding UTF8
-    Write-Log "Environment configured"
+    Write-Log "Environment configured with secure credentials"
     
     # ============ STAGE 4: Service Launch with Session Management ============
     Write-Log ""
