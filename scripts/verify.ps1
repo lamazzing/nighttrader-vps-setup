@@ -221,7 +221,7 @@ Write-Host "Network Connectivity:" -ForegroundColor White
 Write-Host "---------------------" -ForegroundColor Gray
 
 # 8. Check Redis connectivity
-$redisHost = if ($env:DIGITALOCEAN_IP) { $env:DIGITALOCEAN_IP } else { "104.236.86.194" }
+$redisHost = if ($env:DIGITALOCEAN_IP) { $env:DIGITALOCEAN_IP } else { "138.197.3.109" }
 if (Test-Port -Host $redisHost -Port 6379) {
     Write-Status "Redis" "OK" "Reachable at ${redisHost}:6379"
 } else {

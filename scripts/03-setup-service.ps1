@@ -107,6 +107,7 @@ try {
     $rabbitmqUser = if ($env:RABBITMQ_USER) { $env:RABBITMQ_USER } else { "nighttrader" }
     $queueName = if ($env:RABBITMQ_QUEUE_NAME) { $env:RABBITMQ_QUEUE_NAME } else { "mt5_signals" }
     $webhookToken = if ($env:WEBHOOK_TOKEN) { $env:WEBHOOK_TOKEN } else { "" }
+    $digitalOceanIP = if ($env:DIGITALOCEAN_IP) { $env:DIGITALOCEAN_IP } else { "138.197.3.109" }
     
     $envContent = @"
 # MT5 Configuration (configure manually in MT5 terminal)
@@ -115,7 +116,7 @@ MT5_PASSWORD=
 MT5_SERVER=
 
 # Service Configuration
-DIGITALOCEAN_DROPLET_IP=104.236.86.194
+DIGITALOCEAN_DROPLET_IP=$digitalOceanIP
 SINGLE_TRADE_MODE=true
 CLOSE_OPPOSITE_POSITIONS=false
 

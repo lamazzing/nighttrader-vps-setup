@@ -247,7 +247,7 @@ class MT5Service:
         """Connect to RabbitMQ and Redis on DigitalOcean"""
         try:
             # Get DigitalOcean IP
-            digitalocean_ip = os.getenv('DIGITALOCEAN_DROPLET_IP', '104.236.86.194')
+            digitalocean_ip = os.getenv('DIGITALOCEAN_DROPLET_IP', os.getenv('DIGITALOCEAN_IP', '138.197.3.109'))
             
             # Get queue name from environment (VPS-specific or default)
             self.queue_name = os.getenv('RABBITMQ_QUEUE_NAME', 'mt5_signals')
