@@ -69,9 +69,29 @@ try {
         }
     }
     
+    # Wait a moment for filesystem to settle
+    Start-Sleep -Seconds 2
+    
+    # List what we actually have
+    Write-Log "Contents of C:\NightTrader\service:"
+    $serviceContents = Get-ChildItem "C:\NightTrader\service" -Name
+    foreach ($item in $serviceContents) {
+        Write-Log "  - $item"
+    }
+    
     # Change to service directory
-    Set-Location "C:\NightTrader\service\mt5-service"
-    Write-Log "Changed to mt5-service directory"
+    $mt5ServicePath = "C:\NightTrader\service\mt5-service"
+    if (Test-Path $mt5ServicePath) {
+        Set-Location $mt5ServicePath
+        Write-Log "Changed to mt5-service directory"
+    } else {
+        Write-Log "ERROR: mt5-service directory not found at: $mt5ServicePath"
+        Write-Log "Available directories:"
+        Get-ChildItem "C:\NightTrader\service" -Directory | ForEach-Object {
+            Write-Log "  - $($_.FullName)"
+        }
+        throw "mt5-service directory not found"
+    }
     
     # Upgrade pip
     Write-Log ""
