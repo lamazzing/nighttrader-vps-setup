@@ -22,6 +22,26 @@ try {
     # Change to NightTrader directory
     Set-Location "C:\NightTrader"
     
+    # Clean up any existing service directory
+    if (Test-Path "C:\NightTrader\service") {
+        Write-Log "Found existing service directory, removing it..."
+        try {
+            Remove-Item -Path "C:\NightTrader\service" -Recurse -Force -ErrorAction Stop
+            Write-Log "Existing service directory removed"
+        } catch {
+            Write-Log "Warning: Could not remove existing service directory: $_"
+            # Try to rename it instead
+            $backupName = "service_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+            try {
+                Rename-Item -Path "C:\NightTrader\service" -NewName $backupName -Force
+                Write-Log "Renamed existing service directory to $backupName"
+            } catch {
+                Write-Log "ERROR: Cannot remove or rename existing service directory"
+                throw "Service directory exists and cannot be cleaned up"
+            }
+        }
+    }
+    
     # Clone service repository
     Write-Log "Cloning NightTrader service repository..."
     $repoUrl = if ($env:MT5_SERVICE_REPO) { 
