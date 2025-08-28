@@ -45,14 +45,23 @@ class MT5Service:
     def connect_mt5(self):
         """Initialize and login to MT5"""
         try:
+            # Check if MT5 credentials are configured
+            login_str = os.getenv('MT5_LOGIN', '').strip()
+            password = os.getenv('MT5_PASSWORD', '').strip()
+            server = os.getenv('MT5_SERVER', '').strip()
+            
+            if not login_str or login_str == '0' or not password or not server:
+                logger.warning("MT5 credentials not configured. Skipping MT5 connection.")
+                logger.warning("Please configure MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER in the .env file")
+                self.mt5_connected = False
+                return False
+            
             logger.info("Initializing MT5...")
             if not mt5.initialize():
                 logger.error("Failed to initialize MT5")
                 return False
                 
-            login = int(os.getenv('MT5_LOGIN'))
-            password = os.getenv('MT5_PASSWORD')
-            server = os.getenv('MT5_SERVER')
+            login = int(login_str)
             
             if not mt5.login(login, password, server):
                 error = mt5.last_error()
@@ -104,6 +113,11 @@ class MT5Service:
     
     def get_tradeable_symbol(self, requested_symbol):
         """Get the tradeable version of a symbol"""
+        # Return None if MT5 is not connected
+        if not self.mt5_connected:
+            logger.warning("MT5 not connected - cannot get tradeable symbol")
+            return None
+            
         # First, check if exact symbol exists and is tradeable
         info = mt5.symbol_info(requested_symbol)
         if info and info.visible and info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL:
@@ -139,6 +153,10 @@ class MT5Service:
     def has_open_position(self):
         """Check if there are any open positions with our magic number"""
         try:
+            # Return False if MT5 is not connected
+            if not self.mt5_connected:
+                return False
+                
             # Get all open positions
             positions = mt5.positions_get()
             
@@ -163,6 +181,10 @@ class MT5Service:
     def close_opposite_positions(self, symbol, action):
         """Close any open positions that are opposite to the incoming signal"""
         try:
+            # Return True if MT5 is not connected (nothing to close)
+            if not self.mt5_connected:
+                return True
+                
             # Get all open positions for this symbol
             positions = mt5.positions_get(symbol=symbol)
             
@@ -315,6 +337,13 @@ class MT5Service:
             
             logger.info(f"Processing signal: {signal}")
             
+            # CRITICAL: Check if MT5 is connected before processing
+            if not self.mt5_connected:
+                logger.warning("MT5 not connected - cannot process trading signals")
+                logger.warning("Configure MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER in .env file")
+                self.log_trade_attempt(signal, "SKIPPED", "MT5 not connected")
+                return True  # ACK to prevent queue buildup
+            
             # CRITICAL: Validate this signal is for THIS VPS
             signal_vps_id = signal.get('vps_id', 'unknown')
             if signal_vps_id != self.vps_id:
@@ -354,10 +383,12 @@ class MT5Service:
             
             logger.info(f"Using tradeable symbol: {symbol} (requested: {requested_symbol})")
             
-            # Check if MT5 is still connected
-            if not mt5.terminal_info():
+            # Check if MT5 is still connected (only if we had a connection)
+            if self.mt5_connected and not mt5.terminal_info():
                 logger.error("MT5 connection lost, reconnecting...")
                 if not self.connect_mt5():
+                    logger.error("Failed to reconnect to MT5")
+                    self.log_trade_attempt(signal, "FAILED", "MT5 connection lost")
                     return True
             
             # Get symbol info
@@ -515,10 +546,11 @@ class MT5Service:
         logger.info(f"  - Close Opposite Positions: {'ENABLED' if Config.CLOSE_OPPOSITE_POSITIONS else 'DISABLED'}")
         logger.info(f"Security: Token-based queue isolation ENABLED")
         
-        # Connect to MT5
+        # Connect to MT5 (but continue if it fails)
         if not self.connect_mt5():
-            logger.error("Failed to connect to MT5")
-            return
+            logger.warning("Failed to connect to MT5 - service will run in monitoring mode")
+            logger.warning("Trading signals will be received but not executed")
+            logger.warning("Configure MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER in .env to enable trading")
         
         # Connect to services
         if not self.connect_services():

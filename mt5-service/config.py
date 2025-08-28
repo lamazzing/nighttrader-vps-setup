@@ -6,7 +6,9 @@ load_dotenv()
 
 class Config:
     # MT5 Settings
-    MT5_LOGIN = int(os.getenv('MT5_LOGIN', '0'))
+    # Handle empty string values gracefully
+    _mt5_login_str = os.getenv('MT5_LOGIN', '0').strip()
+    MT5_LOGIN = int(_mt5_login_str) if _mt5_login_str and _mt5_login_str.isdigit() else 0
     MT5_PASSWORD = os.getenv('MT5_PASSWORD', '')
     MT5_SERVER = os.getenv('MT5_SERVER', '')
     
