@@ -265,6 +265,126 @@ class MT5Service:
             logger.error(f"Error closing opposite positions: {e}", exc_info=True)
             return False
     
+    def close_positions_by_signal(self, signal):
+        """Close positions based on a close signal from TradingView"""
+        try:
+            # Return True if MT5 is not connected (nothing to close)
+            if not self.mt5_connected:
+                logger.warning("MT5 not connected - cannot close positions")
+                return True
+            
+            # Get symbol from signal
+            requested_symbol = signal.get('symbol', 'EURUSD')
+            symbol = self.get_tradeable_symbol(requested_symbol)
+            
+            if not symbol:
+                logger.error(f"No tradeable symbol found for {requested_symbol}")
+                self.log_trade_attempt(signal, "FAILED", f"No tradeable symbol for {requested_symbol}")
+                return True
+            
+            # Get position type to close from signal (optional)
+            close_type = signal.get('type', 'all').lower()  # 'long', 'short', or 'all'
+            close_reason = signal.get('reason', 'manual_close')
+            
+            # Get all open positions for this symbol
+            positions = mt5.positions_get(symbol=symbol)
+            
+            if not positions:
+                logger.info(f"No open positions for {symbol}")
+                self.log_trade_attempt(signal, "SUCCESS", f"No positions to close for {symbol}")
+                return True
+            
+            # Filter positions by our magic number
+            our_positions = [pos for pos in positions if pos.magic == 234000]
+            
+            if not our_positions:
+                logger.info(f"No NightTrader positions for {symbol}")
+                self.log_trade_attempt(signal, "SUCCESS", f"No NightTrader positions to close for {symbol}")
+                return True
+            
+            # Filter by position type if specified
+            positions_to_close = our_positions
+            if close_type == 'long':
+                positions_to_close = [pos for pos in our_positions if pos.type == 0]  # BUY positions
+            elif close_type == 'short':
+                positions_to_close = [pos for pos in our_positions if pos.type == 1]  # SELL positions
+            
+            if not positions_to_close:
+                logger.info(f"No {close_type} positions to close for {symbol}")
+                self.log_trade_attempt(signal, "SUCCESS", f"No {close_type} positions to close")
+                return True
+            
+            logger.info(f"Found {len(positions_to_close)} position(s) to close for {symbol} (type: {close_type}, reason: {close_reason})")
+            
+            closed_count = 0
+            failed_count = 0
+            
+            for position in positions_to_close:
+                # Prepare close request
+                close_order_type = mt5.ORDER_TYPE_BUY if position.type == 1 else mt5.ORDER_TYPE_SELL
+                
+                close_request = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": position.volume,
+                    "type": close_order_type,
+                    "position": position.ticket,
+                    "price": mt5.symbol_info_tick(symbol).ask if close_order_type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).bid,
+                    "deviation": 20,
+                    "magic": 234000,
+                    "comment": f"Close: {close_reason}",
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                
+                position_type_str = 'LONG' if position.type == 0 else 'SHORT'
+                logger.info(f"Closing {position_type_str} position {position.ticket} (volume: {position.volume})")
+                
+                result = mt5.order_send(close_request)
+                
+                if result is None:
+                    error = mt5.last_error()
+                    logger.error(f"Failed to close position {position.ticket}: order_send returned None. Error: {error}")
+                    failed_count += 1
+                elif result.retcode != mt5.TRADE_RETCODE_DONE:
+                    logger.error(f"Failed to close position {position.ticket}: {result.comment} (code: {result.retcode})")
+                    failed_count += 1
+                else:
+                    logger.info(f"Successfully closed position {position.ticket} with order {result.order}")
+                    closed_count += 1
+                    
+                    # Log the closure in Redis
+                    try:
+                        closure_data = {
+                            "signal_id": signal.get('id'),
+                            "closed_position": position.ticket,
+                            "close_order": result.order,
+                            "symbol": symbol,
+                            "volume": position.volume,
+                            "position_type": position_type_str,
+                            "timestamp": datetime.now().isoformat(),
+                            "reason": close_reason
+                        }
+                        self.redis_client.hset(
+                            f"position_closure:{result.order}",
+                            mapping=closure_data
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log position closure in Redis: {e}")
+            
+            # Log the overall result
+            if failed_count == 0:
+                self.log_trade_attempt(signal, "SUCCESS", f"Closed {closed_count} position(s)")
+            else:
+                self.log_trade_attempt(signal, "PARTIAL", f"Closed {closed_count} position(s), {failed_count} failed")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error closing positions by signal: {e}", exc_info=True)
+            self.log_trade_attempt(signal, "ERROR", str(e))
+            return False
+    
     def connect_services(self):
         """Connect to RabbitMQ and Redis on DigitalOcean"""
         try:
@@ -379,6 +499,12 @@ class MT5Service:
                 return True
             
             action = signal.get('action', 'BUY').upper()
+            
+            # Handle CLOSE action
+            if action == 'CLOSE':
+                logger.info(f"Processing CLOSE signal for {requested_symbol}")
+                return self.close_positions_by_signal(signal)
+            
             quantity = float(signal.get('quantity', 0.01))
             
             logger.info(f"Using tradeable symbol: {symbol} (requested: {requested_symbol})")
