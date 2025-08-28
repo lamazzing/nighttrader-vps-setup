@@ -93,6 +93,44 @@ try {
         throw "mt5-service directory not found"
     }
     
+    # Ensure Python is in PATH
+    Write-Log ""
+    Write-Log "Checking Python availability..."
+    $pythonPath = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonPath) {
+        Write-Log "Python not found in PATH, searching common locations..."
+        $pythonLocations = @(
+            "C:\Python313\python.exe",
+            "C:\Python312\python.exe", 
+            "C:\Python311\python.exe",
+            "C:\Python310\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
+        )
+        
+        $foundPython = $false
+        foreach ($location in $pythonLocations) {
+            if (Test-Path $location) {
+                Write-Log "Found Python at: $location"
+                # Add to PATH for this session
+                $pythonDir = Split-Path $location -Parent
+                $env:Path = "$pythonDir;$env:Path"
+                $foundPython = $true
+                break
+            }
+        }
+        
+        if (-not $foundPython) {
+            throw "Python not found! Please ensure Python is installed."
+        }
+    } else {
+        Write-Log "Python found at: $($pythonPath.Source)"
+    }
+    
+    # Verify Python works
+    $pythonVersion = & python --version 2>&1
+    Write-Log "Python version: $pythonVersion"
+    
     # Upgrade pip
     Write-Log ""
     Write-Log "Upgrading pip..."
@@ -184,6 +222,17 @@ REDIS_PASSWORD=$redisPassword
     
 } catch {
     Write-Log "ERROR: Service setup failed"
-    Write-Log $_.Exception.Message
+    Write-Log "Exception Message: $($_.Exception.Message)"
+    Write-Log "Exception Type: $($_.Exception.GetType().FullName)"
+    Write-Log "Stack Trace:"
+    Write-Log $_.Exception.StackTrace
+    Write-Log "Script Line: $($_.InvocationInfo.ScriptLineNumber)"
+    Write-Log "Command: $($_.InvocationInfo.Line)"
+    
+    # Also write to console for immediate visibility
+    Write-Host "ERROR DETAILS:" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host "At line: $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
+    
     exit 1
 }
