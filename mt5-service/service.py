@@ -95,7 +95,7 @@ class MT5Service:
             if symbol.visible and symbol.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL:
                 tradeable_count += 1
                 # Create mappings for common variations
-                base_name = symbol.name.replace('.p', '').replace('.a', '').replace('m', '')
+                base_name = symbol.name.replace('.p', '').replace('.s', '').replace('.a', '').replace('m', '')
                 self.symbol_map[base_name] = symbol.name
                 self.symbol_map[symbol.name] = symbol.name  # Direct mapping
                 
@@ -130,15 +130,15 @@ class MT5Service:
             mt5.symbol_select(mapped, True)
             return mapped
         
-        # Try removing .p suffix and check map
-        base_symbol = requested_symbol.replace('.p', '').replace('.a', '')
+        # Try removing .p, .s, .a suffixes and check map
+        base_symbol = requested_symbol.replace('.p', '').replace('.s', '').replace('.a', '')
         if base_symbol in self.symbol_map:
             mapped = self.symbol_map[base_symbol]
             mt5.symbol_select(mapped, True)
             return mapped
         
         # If still not found, try common suffixes
-        for suffix in ['.p', '.a', 'm', '']:
+        for suffix in ['.p', '.s', '.a', 'm', '']:
             test_symbol = base_symbol + suffix
             info = mt5.symbol_info(test_symbol)
             if info and info.visible and info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL:
