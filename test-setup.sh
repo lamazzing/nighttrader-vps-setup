@@ -63,12 +63,14 @@ check_dir "scripts" "Scripts directory"
 check_file "mt5-service/service.py" "Main service file"
 check_file "mt5-service/config.py" "Configuration file"
 check_file "mt5-service/requirements.txt" "Python requirements"
-check_file "mt5-service/service_wrapper.py" "Service wrapper"
 
 # Check scripts
 check_file "scripts/startup-script.ps1" "Startup script"
-check_file "scripts/update.ps1" "Update script"
-check_file "scripts/verify.ps1" "Verification script"
+check_file "scripts/01-install-prerequisites.ps1" "Prerequisites installation script"
+check_file "scripts/02-install-mt5.ps1" "MT5 installation script"
+check_file "scripts/03-setup-service.ps1" "Service setup script"
+check_file "scripts/04-start-service.ps1" "Service start script"
+check_file "scripts/05-verify-installation.ps1" "Installation verification script"
 
 # Check documentation
 check_file "README.md" "README documentation"
@@ -80,8 +82,11 @@ echo "-------------------------"
 # Check PowerShell script syntax (if pwsh is available)
 if command -v pwsh > /dev/null 2>&1; then
     run_test "Startup script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/startup-script.ps1 | Out-Null\""
-    run_test "Update script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/update.ps1 | Out-Null\""
-    run_test "Verify script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/verify.ps1 | Out-Null\""
+    run_test "Prerequisites script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/01-install-prerequisites.ps1 | Out-Null\""
+    run_test "MT5 install script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/02-install-mt5.ps1 | Out-Null\""
+    run_test "Service setup script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/03-setup-service.ps1 | Out-Null\""
+    run_test "Service start script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/04-start-service.ps1 | Out-Null\""
+    run_test "Verify installation script syntax" "pwsh -NoProfile -Command \"Get-Content scripts/05-verify-installation.ps1 | Out-Null\""
 else
     echo -e "${YELLOW}⚠ PowerShell not available, skipping syntax checks${NC}"
 fi

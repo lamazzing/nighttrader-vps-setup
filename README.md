@@ -57,11 +57,10 @@ Create the Windows VPS. The startup script will:
 
 ### 4. Verify Installation
 
-After ~15 minutes, SSH into your VPS and run:
+After ~15 minutes, SSH into your VPS and check the logs:
 
 ```powershell
-cd C:\NightTrader\service\scripts
-.\verify.ps1
+Get-Content C:\NightTrader\logs\mt5_service.log -Tail 50
 ```
 
 ## Repository Structure
@@ -69,14 +68,16 @@ cd C:\NightTrader\service\scripts
 ```
 nighttrader-vps-setup/
 ├── mt5-service/
-│   ├── service.py          # Main MT5 service
-│   ├── config.py           # Service configuration
-│   ├── requirements.txt    # Python dependencies
-│   └── service_wrapper.py  # Service wrapper
+│   ├── service.py               # Main MT5 service
+│   ├── config.py                # Service configuration
+│   └── requirements.txt         # Python dependencies
 ├── scripts/
-│   ├── startup-script.ps1  # VPS startup script (main installer)
-│   ├── update.ps1          # Update service from Git
-│   └── verify.ps1          # Health check script
+│   ├── startup-script.ps1       # Complete VPS setup script
+│   ├── 01-install-prerequisites.ps1  # Install Python, Git, SSH, PsExec
+│   ├── 02-install-mt5.ps1       # Install MT5 Terminal
+│   ├── 03-setup-service.ps1     # Clone repo and configure service
+│   ├── 04-start-service.ps1     # Start service with session management
+│   └── 05-verify-installation.ps1 # Verify installation completeness
 └── README.md
 ```
 
@@ -85,28 +86,14 @@ nighttrader-vps-setup/
 ### Update Service
 
 ```powershell
-# Update to latest version
-cd C:\NightTrader\service\scripts
-.\update.ps1
+# Update to latest version from Git
+cd C:\NightTrader\service
+git pull
 
-# Update without restarting
-.\update.ps1 -NoRestart
-
-# Force update (stash local changes)
-.\update.ps1 -Force
-```
-
-### Health Check
-
-```powershell
-# Basic health check
-.\verify.ps1
-
-# Verbose output with logs
-.\verify.ps1 -Verbose
-
-# Attempt to fix issues
-.\verify.ps1 -FixIssues
+# Restart service after update
+Get-Process python | Where-Object {$_.CommandLine -like "*service.py*"} | Stop-Process -Force
+$mt5Session = (Get-Process terminal64).SessionId
+psexec -accepteula -i $mt5Session -d "C:\Python313\python.exe" "C:\NightTrader\service\mt5-service\service.py"
 ```
 
 ### Manual Service Control
@@ -132,14 +119,15 @@ Get-Content C:\NightTrader\logs\mt5_service.log -Tail 50 -Wait
    Get-Process terminal64
    ```
 
-2. Verify service is in correct session:
-   ```powershell
-   .\verify.ps1 -FixIssues
-   ```
-
-3. Check logs for errors:
+2. Check logs for errors:
    ```powershell
    Get-Content C:\NightTrader\logs\mt5_service.log -Tail 100
+   ```
+
+3. Restart service in correct session:
+   ```powershell
+   $mt5Session = (Get-Process terminal64).SessionId
+   psexec -accepteula -i $mt5Session -d "C:\Python313\python.exe" "C:\NightTrader\service\mt5-service\service.py"
    ```
 
 ### MT5 Connection Issues
