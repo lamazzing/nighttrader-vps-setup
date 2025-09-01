@@ -37,6 +37,14 @@ class Config:
     RABBITMQ_PASSWORD = os.getenv('RABBITMQ_PASSWORD')
     REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
     
+    # RabbitMQ Connection Parameters
+    RABBITMQ_HEARTBEAT = int(os.getenv('RABBITMQ_HEARTBEAT', '60'))  # Heartbeat interval in seconds
+    RABBITMQ_BLOCKED_CONNECTION_TIMEOUT = int(os.getenv('RABBITMQ_BLOCKED_CONNECTION_TIMEOUT', '300'))  # 5 minutes
+    RABBITMQ_CONNECTION_ATTEMPTS = int(os.getenv('RABBITMQ_CONNECTION_ATTEMPTS', '3'))
+    RABBITMQ_RETRY_DELAY = int(os.getenv('RABBITMQ_RETRY_DELAY', '5'))  # Initial retry delay in seconds
+    RABBITMQ_MAX_RETRY_DELAY = int(os.getenv('RABBITMQ_MAX_RETRY_DELAY', '60'))  # Max retry delay
+    RABBITMQ_SOCKET_TIMEOUT = float(os.getenv('RABBITMQ_SOCKET_TIMEOUT', '10.0'))  # Socket timeout
+    
     @classmethod
     def validate(cls):
         """Validate required configuration"""

@@ -7,6 +7,7 @@ MT5 Service v6 - Single Trade Mode with configurable opposite position closing
 
 import MetaTrader5 as mt5
 import pika
+import pika.exceptions
 import redis
 import json
 import time
@@ -16,6 +17,7 @@ import os
 from dotenv import load_dotenv
 import uuid
 from config import Config
+import socket
 
 # Load environment
 load_dotenv()
@@ -37,10 +39,13 @@ logger = logging.getLogger('MT5Service')
 class MT5Service:
     def __init__(self):
         self.mt5_connected = False
+        self.rabbitmq_connection = None
         self.rabbitmq_channel = None
         self.redis_client = None
         self.symbol_map = {}  # Map requested symbols to tradeable ones
         self.vps_id = os.getenv('VPS_INSTANCE_ID', 'unknown')  # Unique VPS identifier
+        self.should_stop = False  # Flag for graceful shutdown
+        self.reconnect_delay = Config.RABBITMQ_RETRY_DELAY
         
     def connect_mt5(self):
         """Initialize and login to MT5"""
@@ -385,8 +390,8 @@ class MT5Service:
             self.log_trade_attempt(signal, "ERROR", str(e))
             return False
     
-    def connect_services(self):
-        """Connect to RabbitMQ and Redis on DigitalOcean"""
+    def connect_rabbitmq(self):
+        """Connect to RabbitMQ with enhanced parameters"""
         try:
             # Get DigitalOcean IP
             digitalocean_ip = os.getenv('DIGITALOCEAN_DROPLET_IP', os.getenv('DIGITALOCEAN_IP', '138.197.3.109'))
@@ -402,26 +407,66 @@ class MT5Service:
                 logger.error("RABBITMQ_PASSWORD not set in environment")
                 return False
             
-            # Connect to RabbitMQ
-            logger.info(f"Connecting to RabbitMQ at {digitalocean_ip}...")
-            rabbitmq_url = f"amqp://{rabbitmq_user}:{rabbitmq_password}@{digitalocean_ip}:5672"
-            connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
-            self.rabbitmq_channel = connection.channel()
+            # Create connection parameters with heartbeat and timeout settings
+            logger.info(f"Connecting to RabbitMQ at {digitalocean_ip} with heartbeat={Config.RABBITMQ_HEARTBEAT}s...")
             
-            # Try to declare queue (will fail with read-only user - that's OK)
+            # Build connection parameters with enhanced settings
+            connection_params = pika.ConnectionParameters(
+                host=digitalocean_ip,
+                port=5672,
+                credentials=pika.PlainCredentials(rabbitmq_user, rabbitmq_password),
+                heartbeat=Config.RABBITMQ_HEARTBEAT,
+                blocked_connection_timeout=Config.RABBITMQ_BLOCKED_CONNECTION_TIMEOUT,
+                socket_timeout=Config.RABBITMQ_SOCKET_TIMEOUT,
+                connection_attempts=Config.RABBITMQ_CONNECTION_ATTEMPTS,
+                retry_delay=Config.RABBITMQ_RETRY_DELAY,
+                # TCP keepalive settings (helps detect broken connections)
+                tcp_options={
+                    'TCP_KEEPIDLE': 120,  # Start keepalive after 2 minutes of idle
+                    'TCP_KEEPINTVL': 30,  # Interval between keepalive probes
+                    'TCP_KEEPCNT': 10,    # Number of keepalive probes
+                    'TCP_USER_TIMEOUT': 300000  # Total time for unacknowledged data (5 min)
+                }
+            )
+            
+            # Create connection
+            self.rabbitmq_connection = pika.BlockingConnection(connection_params)
+            self.rabbitmq_channel = self.rabbitmq_connection.channel()
+            
+            # Set QoS
+            self.rabbitmq_channel.basic_qos(prefetch_count=1)
+            
+            # Try to check if queue exists (passive declare)
             try:
                 self.rabbitmq_channel.queue_declare(queue=self.queue_name, durable=True, passive=True)
                 logger.info(f"Queue {self.queue_name} exists")
             except pika.exceptions.ChannelClosedByBroker as e:
                 if "ACCESS_REFUSED" in str(e):
                     logger.info(f"Read-only access confirmed - queue {self.queue_name} should exist")
-                    # Reconnect after ACCESS_REFUSED error
-                    connection = pika.BlockingConnection(pika.URLParameters(rabbitmq_url))
-                    self.rabbitmq_channel = connection.channel()
+                    # Recreate channel after ACCESS_REFUSED error
+                    self.rabbitmq_channel = self.rabbitmq_connection.channel()
+                    self.rabbitmq_channel.basic_qos(prefetch_count=1)
+                elif "NOT_FOUND" in str(e):
+                    logger.error(f"Queue {self.queue_name} does not exist on server")
+                    return False
                 else:
                     raise
             
-            logger.info(f"RabbitMQ connected to queue: {self.queue_name}")
+            logger.info(f"RabbitMQ connected successfully to queue: {self.queue_name}")
+            return True
+            
+        except pika.exceptions.AMQPConnectionError as e:
+            logger.error(f"RabbitMQ connection failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error connecting to RabbitMQ: {e}")
+            return False
+    
+    def connect_redis(self):
+        """Connect to Redis with retry logic"""
+        try:
+            # Get DigitalOcean IP
+            digitalocean_ip = os.getenv('DIGITALOCEAN_DROPLET_IP', os.getenv('DIGITALOCEAN_IP', '138.197.3.109'))
             
             # Get Redis password from environment
             redis_password = os.getenv('REDIS_PASSWORD')
@@ -435,16 +480,33 @@ class MT5Service:
                 host=digitalocean_ip,
                 port=6379,
                 password=redis_password,
-                decode_responses=True
+                decode_responses=True,
+                socket_connect_timeout=10,
+                socket_timeout=5,
+                retry_on_timeout=True,
+                retry_on_error=[ConnectionError, TimeoutError],
+                health_check_interval=30
             )
             self.redis_client.ping()
             logger.info("Redis connected")
-            
             return True
             
         except Exception as e:
-            logger.error(f"Service connection error: {e}")
+            logger.error(f"Redis connection error: {e}")
             return False
+    
+    def connect_services(self):
+        """Connect to RabbitMQ and Redis on DigitalOcean"""
+        # Connect to Redis first (less critical)
+        if not self.connect_redis():
+            logger.warning("Failed to connect to Redis - continuing without Redis logging")
+            self.redis_client = None
+        
+        # Connect to RabbitMQ (critical)
+        if not self.connect_rabbitmq():
+            return False
+        
+        return True
     
     def process_signal(self, signal):
         """Process trading signal with improved error handling"""
@@ -662,15 +724,122 @@ class MT5Service:
             logger.error(f"Message handling error: {e}")
             channel.basic_ack(delivery_tag=method.delivery_tag)
     
+    def ensure_rabbitmq_connected(self):
+        """Ensure RabbitMQ is connected, reconnect if necessary"""
+        try:
+            if self.rabbitmq_connection and not self.rabbitmq_connection.is_closed:
+                # Try to check connection health
+                self.rabbitmq_connection.process_data_events(time_limit=0)
+                return True
+        except Exception as e:
+            logger.warning(f"RabbitMQ connection check failed: {e}")
+        
+        # Connection is closed or unhealthy, attempt reconnection
+        logger.info("RabbitMQ connection lost, attempting to reconnect...")
+        
+        # Close existing connection cleanly if possible
+        try:
+            if self.rabbitmq_connection:
+                self.rabbitmq_connection.close()
+        except:
+            pass
+        
+        self.rabbitmq_connection = None
+        self.rabbitmq_channel = None
+        
+        # Attempt reconnection with exponential backoff
+        retry_count = 0
+        while not self.should_stop:
+            retry_count += 1
+            
+            if self.connect_rabbitmq():
+                logger.info("Successfully reconnected to RabbitMQ")
+                self.reconnect_delay = Config.RABBITMQ_RETRY_DELAY  # Reset delay
+                return True
+            
+            # Calculate backoff delay
+            self.reconnect_delay = min(self.reconnect_delay * 2, Config.RABBITMQ_MAX_RETRY_DELAY)
+            
+            logger.warning(f"Reconnection attempt {retry_count} failed. Waiting {self.reconnect_delay} seconds before retry...")
+            
+            # Wait with ability to stop
+            for _ in range(self.reconnect_delay):
+                if self.should_stop:
+                    return False
+                time.sleep(1)
+        
+        return False
+    
+    def consume_with_reconnect(self):
+        """Consume messages with automatic reconnection on failure"""
+        while not self.should_stop:
+            try:
+                # Ensure we're connected
+                if not self.ensure_rabbitmq_connected():
+                    if self.should_stop:
+                        break
+                    continue
+                
+                # Setup consumer
+                logger.info(f"Setting up consumer for queue: {self.queue_name}")
+                self.rabbitmq_channel.basic_consume(
+                    queue=self.queue_name,
+                    on_message_callback=self.on_message,
+                    auto_ack=False
+                )
+                
+                logger.info(f"Starting to consume messages from queue: {self.queue_name}")
+                
+                # Start consuming with connection monitoring
+                try:
+                    # Process messages until connection fails or stop is requested
+                    while not self.should_stop:
+                        try:
+                            # Process with timeout to allow periodic checks
+                            self.rabbitmq_connection.process_data_events(time_limit=1)
+                        except pika.exceptions.ConnectionClosed:
+                            logger.error("RabbitMQ connection closed unexpectedly")
+                            break
+                        except pika.exceptions.ChannelClosed:
+                            logger.error("RabbitMQ channel closed unexpectedly")
+                            break
+                        except pika.exceptions.StreamLostError as e:
+                            logger.error(f"RabbitMQ stream lost: {e}")
+                            break
+                        except socket.timeout:
+                            # Normal timeout, continue
+                            continue
+                        except Exception as e:
+                            logger.error(f"Unexpected error during message processing: {e}")
+                            break
+                
+                except KeyboardInterrupt:
+                    logger.info("Received interrupt signal")
+                    self.should_stop = True
+                    break
+                
+            except pika.exceptions.AMQPConnectionError as e:
+                logger.error(f"AMQP connection error: {e}")
+                time.sleep(1)  # Brief pause before reconnection attempt
+            except Exception as e:
+                logger.error(f"Unexpected error in consume loop: {e}", exc_info=True)
+                time.sleep(1)  # Brief pause before reconnection attempt
+        
+        logger.info("Message consumption stopped")
+    
     def run(self):
-        """Main service loop"""
-        logger.info("Starting MT5 Service v6 (Token-Secured Edition)...")
+        """Main service loop with automatic reconnection"""
+        logger.info("Starting MT5 Service v7 (Auto-Reconnect Edition)...")
         logger.info(f"VPS Instance ID: {self.vps_id}")
         logger.info(f"Queue Name: {os.getenv('RABBITMQ_QUEUE_NAME', 'not set')}")
         logger.info(f"Trading Mode Configuration:")
         logger.info(f"  - Single Trade Mode: {'ENABLED' if Config.SINGLE_TRADE_MODE else 'DISABLED'}")
         logger.info(f"  - Close Opposite Positions: {'ENABLED' if Config.CLOSE_OPPOSITE_POSITIONS else 'DISABLED'}")
         logger.info(f"Security: Token-based queue isolation ENABLED")
+        logger.info(f"RabbitMQ Configuration:")
+        logger.info(f"  - Heartbeat: {Config.RABBITMQ_HEARTBEAT} seconds")
+        logger.info(f"  - Connection timeout: {Config.RABBITMQ_BLOCKED_CONNECTION_TIMEOUT} seconds")
+        logger.info(f"  - Max retry delay: {Config.RABBITMQ_MAX_RETRY_DELAY} seconds")
         
         # Connect to MT5 (but continue if it fails)
         if not self.connect_mt5():
@@ -678,28 +847,55 @@ class MT5Service:
             logger.warning("Trading signals will be received but not executed")
             logger.warning("Configure MT5_LOGIN, MT5_PASSWORD, and MT5_SERVER in .env to enable trading")
         
-        # Connect to services
-        if not self.connect_services():
-            logger.error("Failed to connect to services")
-            return
+        # Connect to Redis (non-critical)
+        if not self.connect_redis():
+            logger.warning("Failed to connect to Redis - continuing without Redis logging")
+            self.redis_client = None
         
-        # Setup consumer for VPS-specific queue
-        self.rabbitmq_channel.basic_qos(prefetch_count=1)
-        self.rabbitmq_channel.basic_consume(
-            queue=self.queue_name,
-            on_message_callback=self.on_message,
-            auto_ack=False
-        )
+        logger.info("Service started. Ready to process trading signals!")
         
-        logger.info(f"Service started. Listening on queue: {self.queue_name}")
-        logger.info("Ready to trade on PU Prime demo!")
-        
+        # Main loop with automatic reconnection
         try:
-            self.rabbitmq_channel.start_consuming()
+            self.consume_with_reconnect()
         except KeyboardInterrupt:
-            logger.info("Shutting down...")
-            self.rabbitmq_channel.stop_consuming()
-            mt5.shutdown()
+            logger.info("Received shutdown signal")
+        except Exception as e:
+            logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+        finally:
+            self.shutdown()
+    
+    def shutdown(self):
+        """Gracefully shutdown the service"""
+        logger.info("Shutting down MT5 Service...")
+        self.should_stop = True
+        
+        # Close RabbitMQ connection
+        try:
+            if self.rabbitmq_channel:
+                self.rabbitmq_channel.stop_consuming()
+            if self.rabbitmq_connection and not self.rabbitmq_connection.is_closed:
+                self.rabbitmq_connection.close()
+                logger.info("RabbitMQ connection closed")
+        except Exception as e:
+            logger.warning(f"Error closing RabbitMQ connection: {e}")
+        
+        # Close Redis connection
+        try:
+            if self.redis_client:
+                self.redis_client.close()
+                logger.info("Redis connection closed")
+        except Exception as e:
+            logger.warning(f"Error closing Redis connection: {e}")
+        
+        # Shutdown MT5
+        try:
+            if self.mt5_connected:
+                mt5.shutdown()
+                logger.info("MT5 connection closed")
+        except Exception as e:
+            logger.warning(f"Error closing MT5 connection: {e}")
+        
+        logger.info("Service shutdown complete")
 
 if __name__ == "__main__":
     service = MT5Service()
